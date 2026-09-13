@@ -8,6 +8,13 @@ on:
         type: string
         required: false
         default: ""
+      run_cuda:
+        description: Run the H100 suites; false selects Apple Silicon UT.
+        type: boolean
+        required: false
+        default: true
+  # Direct dispatch runs only the Apple suite; H100 needs Omni CI's setup job.
+  workflow_dispatch:
 
 env:
   OMNI_CI_HOME: >-
@@ -16,11 +23,13 @@ env:
         || format('/data/omni-ci/run-{0}', github.run_id) }}
 
 # Invoked by omni-ci.yaml after shared setup (first suite in the omni-ci
-# sequence: PR Test -> ASR -> TTS -> Qwen3-Omni). Restores omni only.
+# sequence: PR Test -> ASR -> TTS -> Qwen3-Omni). The Apple-only caller runs
+# after preflight and prepares its own macOS environment.
 
 jobs:
   unit-test:
     name: unit-test
+    if: ${{ inputs.run_cuda }}
     runs-on: [self-hosted, h100]
     container:
       image: hongccc/sglang-omni@sha256:ebe4239e29a764ee3a2806385c061c5fd438a26f01458e503d3822dcba5790df
@@ -55,6 +64,7 @@ jobs:
 
   unit-test-accelerator:
     name: unit-test-accelerator
+    if: ${{ inputs.run_cuda }}
     runs-on: [self-hosted, h100]
     container:
       image: hongccc/sglang-omni@sha256:ebe4239e29a764ee3a2806385c061c5fd438a26f01458e503d3822dcba5790df
@@ -82,3 +92,56 @@ jobs:
           export PYTHONPATH=$PWD
           bash .github/scripts/run_flaky_pytest.sh \
             pytest tests/ -v -m "accelerator and not benchmark" -x
+
+  unit-test-apple:
+    name: unit-test-apple
+    if: ${{ !inputs.run_cuda }}
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare Apple CI directories
+        shell: bash
+        run: |
+          ci_root="$(mktemp -d "${RUNNER_TEMP}/omni-apple.XXXXXX")"
+          {
+            echo "SGLANG_OMNI_VENV=${ci_root}/venv"
+            echo "SGLANG_OMNI_CACHE=${ci_root}/source"
+            echo "APPLE_UT_REPORT_DIR=${ci_root}/reports"
+          } >> "$GITHUB_ENV"
+
+      - name: Install Apple runtime
+        id: setup
+        shell: bash
+        run: bash install.sh --non-interactive
+
+      - name: Run Torch MPS unit tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        shell: bash
+        run: |
+          ffmpeg_lib="$(brew --prefix ffmpeg@7)/lib"
+          export DYLD_LIBRARY_PATH="${ffmpeg_lib}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          "$SGLANG_OMNI_VENV/bin/python" .github/scripts/run_apple_ut.py mps
+
+      - name: Run MLX unit tests
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+        shell: bash
+        run: |
+          ffmpeg_lib="$(brew --prefix ffmpeg@7)/lib"
+          export DYLD_LIBRARY_PATH="${ffmpeg_lib}${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+          "$SGLANG_OMNI_VENV/bin/python" .github/scripts/run_apple_ut.py mlx
+
+      - name: Upload Apple unit test reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: apple-ut-reports-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.APPLE_UT_REPORT_DIR }}
+          if-no-files-found: warn
+          retention-days: 7

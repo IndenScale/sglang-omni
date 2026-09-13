@@ -92,6 +92,30 @@ Docker, manual, or Intel XPU instructions below. Common failures are a missing
 Homebrew/uv on `PATH`, an unavailable Python 3.12 toolchain, or forgetting the
 `DYLD_LIBRARY_PATH` export when starting an audio server.
 
+### Apple unit tests
+
+The `PR Test` workflow runs the Apple suite when dispatched directly from
+**Actions → PR Test → Run workflow**. `Omni CI` also calls this suite after its
+existing `run-ci`, draft, lint, and mergeability checks pass. The Apple job uses
+`[self-hosted, macOS, ARM64]` and prepares its own environment independently of
+the H100 setup and benchmark jobs.
+
+To run the same suite locally after installation:
+
+```bash
+export DYLD_LIBRARY_PATH="$(brew --prefix ffmpeg@7)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+.venv-apple/bin/python .github/scripts/run_apple_ut.py mps
+.venv-apple/bin/python .github/scripts/run_apple_ut.py mlx
+```
+
+The test entry point selects the backend before importing SGLang, verifies a
+real Metal operation, and runs the Apple platform, Torch MPS audio runner,
+MLX audio model, and MLX scheduler tests. These use small initialized models
+and mocked loaders with Hugging Face offline mode enabled. Missing hardware,
+empty test runs, and skipped cases fail the suite. JUnit reports and environment
+versions are uploaded as `apple-ut-reports-<run-id>-<attempt>`; local runs write
+to `results/apple-ut`, or `APPLE_UT_REPORT_DIR` when set.
+
 ### Run from a hosted installer
 
 The script also supports a downloaded or `curl | bash` invocation: when it is

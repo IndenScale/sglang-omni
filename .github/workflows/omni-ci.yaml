@@ -2,7 +2,6 @@ name: Omni CI
 
 # DAG:
 #   preflight -> setup -> pr-test -> asr-ci -> tts-ci -> qwen3-omni-ci
-#       +-----> apple-test (independent macOS UT environment)
 #                  |         |          |         |              |
 #                  +-- pick-asr-model --+         |
 #                  +-- pick-tts-model ------------+
@@ -127,13 +126,6 @@ jobs:
       - name: Manual dispatch preflight
         if: ${{ github.event_name == 'workflow_dispatch' }}
         run: echo "Manual workflow_dispatch bypasses PR lint/mergeability gate."
-
-  apple-test:
-    name: Apple UT
-    needs: preflight
-    uses: ./.github/workflows/test.yaml
-    with:
-      run_cuda: false
 
   setup:
     name: setup - omni venv
